@@ -1,6 +1,11 @@
+module;
 
 #include <sstream>
 #include <string>
+
+#include <iostream>
+#include <typeinfo>
+
 
 export module Log;
 
@@ -11,20 +16,23 @@ export class Logger
     std::stringstream stream;
 
   public:
-    Logger() = default;
+    Logger()
+    {
+        stream = std::stringstream();
+    }
 
-    template <typename... Args> void Log(Args... args)
+    template <typename... Args> void Log(const Args &...args)
     {
         (stream << ... << args);
     }
 
     std::string dump()
     {
-        return stream.str(); 
+        return stream.str();
     }
 };
 
-static inline Logger  logged;
+static Logger  logged;
 
 export Logger &GetSingletonLogger()
 {

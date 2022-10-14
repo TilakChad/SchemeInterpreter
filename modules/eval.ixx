@@ -3,12 +3,19 @@
 
 #include <functional>
 #include <variant>
+#include <iostream>
+#include <ranges>
+
+namespace ranges = std::ranges;
+
+import Log;
 
 export module Eval;
 import Lib;
 
 export namespace Eval
 {
+
 export enum class Operator
 {
     Func,
@@ -37,6 +44,7 @@ export enum class DataTypeTag
     Int,
     Real,
     Ptr,
+    Id, // Or id that needs to be resolved or errored
     None
 };
 
@@ -47,12 +55,139 @@ export struct InternDataType
     // std::variant<std::monostate, std::vector<InternDataType>, i64, f64, usize> data; // use visitor patterns for this
     union
     {
-        i64                       integer;
-        f64                       real = 0.0f;
+        i64 integer;
+        f64 real = 0.0f;
+
+        struct
+        {
+            const u8 *begin; // Maybe storing a length would be nicer
+            const u8 *end;
+        } id;
+
         usize                     ptr;
         lib::List<InternDataType> list;
     } data;
 };
+
+struct Macros
+{
+};
+
+struct Expression;
+
+struct Funcs
+{
+    static constexpr u32 MAX_ARGS   = 10;
+    u32                  args_count = 0;
+
+    struct Str
+    {
+        const u8 *begin;
+        const u8 *end;
+    };
+
+    Str         args[MAX_ARGS] = {};
+
+    Expression *body; // ?? Is it the right way of doing this?
+};
+
+struct Lambda
+{
+};
+
+struct SymbolTableEntry
+{
+    enum class EntryType
+    {
+        Var = 0, // Variable with a value
+        Id,      // Unresolved identifier
+        Macro,
+        Function,
+        Lambda,
+        None
+    };
+
+    SymbolTableEntry()   = default;
+
+    EntryType entry_type = EntryType::None;
+    const u8 *n_begin, *n_end;
+
+    union
+    {
+        InternDataType var = {DataTypeTag::None};
+        Macros         macro;
+        Funcs          func;
+    } data;
+};
+
+struct SymbolTable
+{
+    std::vector<SymbolTableEntry> table;
+
+    void                          dump()
+    {
+        constexpr const char *types[] = {"Var", "Id", "Macro", "Function", "Lambda", "None"};
+
+        for (auto const &x : table)
+        {
+            GetSingletonLogger().Log(
+                types[u32(x.entry_type)], " :  ",
+                std::string_view((const char *)x.n_begin, static_cast<size_t>(x.n_end - x.n_begin + 1)));
+        }
+    }
+
+    SymbolTableEntry *GetEntryInTable(InternDataType &type)
+    {
+        auto it = ranges::find_if(table, [&](auto const &elem) {
+            if (true) //(elem.entry_type == SymbolTableEntry::EntryType::Var)
+            {
+                if (lib::StrCmpEqual(type.data.id.begin, type.data.id.end, elem.n_begin, elem.n_end - elem.n_begin + 1))
+                    return true;
+            }
+            return false;
+        });
+        if (it != table.end())
+            return &(*it);
+        return nullptr;
+    }
+};
+
+struct ScopeStack
+{
+    lib::List<SymbolTable> scope_stack;
+
+    ScopeStack()
+    {
+        scope_stack.AddNode(SymbolTable()); // This will serve as global scope for  the interpreter
+    }
+
+    SymbolTable *GetStackTop()
+    {
+        return &scope_stack.GetFirstNode()->data;
+    }
+
+    SymbolTable *PushStack(SymbolTable &table)
+    {
+        scope_stack.AddNode(table);
+        return &scope_stack.GetFirstNode()->data;
+    }
+
+    SymbolTableEntry *GetSymbolEntry(InternDataType &key)
+    {
+        for (auto begin = scope_stack.head; scope_stack.head != scope_stack.GetSentinel(); begin = begin->next)
+        {
+            if (auto x = begin->data.GetEntryInTable(key); x)
+                return x;
+        }
+        return nullptr;
+    }
+    void PopStack()
+    {
+        scope_stack.RemoveFirstNode();
+    }
+};
+
+ScopeStack scopes;
 
 struct Expression
 {
@@ -97,17 +232,24 @@ struct InternVisitor
 
 export InternDataType ApplyOpIntern(InternDataType &x1, InternDataType &x2, auto &&callable, DataTypeTag tag)
 {
+    InternDataType type;
     using enum DataTypeTag;
-    switch (tag)
+    switch (x1.tag)
     {
     case Int:
-        return InternDataType{tag, callable(x1.data.integer, x2.data.integer)};
+
+        if (x2.tag == Int)
+            return {Int, callable(x1.data.integer, x2.data.integer)};
+        if (x2.tag == Real)
+            return {.tag = Real, .data = {.real = callable(x1.data.integer, x2.data.real)}};
+        break;
+
     case Real:
     {
-        auto data      = InternDataType{.tag = tag};
-        data.data.real = callable(x1.data.real, x2.data.real);
-        // return InternDataType{.tag = tag,.data =  callable(x1.data.real, x2.data.real)};
-        return data;
+        if (x2.tag == Real)
+            return InternDataType{.tag = tag, .data = {.real = callable(x1.data.real, x2.data.real)}};
+        if (x2.tag == Int)
+            return InternDataType{.tag = Real, .data = {.real = callable(x1.data.real, x2.data.integer)}};
     }
     default:
         Unimplemented();
@@ -116,15 +258,52 @@ export InternDataType ApplyOpIntern(InternDataType &x1, InternDataType &x2, auto
 
 InternDataType AddExpressions(std::vector<Expression *> &childs)
 {
-    auto           data   = Transform(childs, EvaluateExpressionTree);
+    auto data = Transform(childs, EvaluateExpressionTree);
 
-    InternDataType result = {DataTypeTag::None, {}};
+    Assert(data.size() > 1);
 
-    for (auto &x : data)
+    InternDataType result = data[0];
+
+    for (auto it = data.begin() + 1; it != data.end(); ++it)
     {
         result = ApplyOpIntern(
-            result, x, [](auto x, auto y) { return x + y; }, x.tag);
+            result, *it, [](auto x, auto y) { return x + y; }, result.tag);
     }
+
+    return result;
+}
+
+InternDataType MultiplyExpressions(std::vector<Expression *> &childs)
+{
+    auto data = Transform(childs, EvaluateExpressionTree);
+
+    Assert(data.size() > 1);
+
+    InternDataType result = data[0];
+
+    for (auto it = data.begin() + 1; it != data.end(); ++it)
+    {
+        result = ApplyOpIntern(
+            result, *it, [](auto x, auto y) { return x * y; }, result.tag);
+    }
+
+    return result;
+}
+
+InternDataType DivideExpressions(std::vector<Expression *> &childs)
+{
+    auto data = Transform(childs, EvaluateExpressionTree);
+
+    Assert(data.size() > 1);
+
+    InternDataType result = data[0];
+
+    for (auto it = data.begin() + 1; it != data.end(); ++it)
+    {
+        result = ApplyOpIntern(
+            result, *it, [](auto x, auto y) { return x / y; }, result.tag);
+    }
+
     return result;
 }
 
@@ -132,7 +311,18 @@ InternDataType SubExpressions(std::vector<Expression *> &childs)
 {
     auto data = Transform(childs, EvaluateExpressionTree);
 
-    Assert(data.size() > 1);
+    if (data.size() == 1)
+    {
+        switch (data[0].tag)
+        {
+        case DataTypeTag::Int:
+            return InternDataType{data[0].tag, -data[0].data.integer};
+        case DataTypeTag::Real:
+            return InternDataType{.tag = data[0].tag, .data = {.real = -data[0].data.real}};
+            Unimplemented();
+        }
+    }
+
     InternDataType result = data[0];
 
     /*for (auto &x : data)
@@ -152,22 +342,152 @@ InternDataType SubExpressions(std::vector<Expression *> &childs)
 
 InternDataType EvaluateLeaf(Expression *expr)
 {
-    return expr->val;
+    using enum DataTypeTag;
+    switch (expr->val.tag)
+    {
+    case Int:
+    case Real:
+    case Ptr:
+        return expr->val;
+    case Id:
+    {
+        auto current_scope = scopes.GetStackTop();
+        // auto entry         = current_scope->GetEntryInTable(expr->val);
+        auto entry = scopes.GetSymbolEntry(expr->val);
+        Assert(entry != nullptr);
+
+        return entry->data.var;
+    }
+    default:
+        Unimplemented();
+    }
+}
+
+InternDataType ConstructList(Expression *expr)
+{
+    return InternDataType(DataTypeTag::List);
+}
+
+InternDataType EvalUserDefinedFunction(Expression *expr, Funcs &func)
+{
+    using Type = SymbolTableEntry::EntryType;
+
+    SymbolTable table;
+
+    scopes.PushStack(table);
+    // Enter the entry as specified in order
+    auto             current_scope = scopes.GetStackTop();
+    SymbolTableEntry entry;
+
+    Assert(expr->childs.size() == func.args_count); // args count mismatch
+
+    entry.entry_type = Type::Var;
+
+    u32 index        = 0;
+
+    for (auto x : expr->childs)
+    {
+        entry.n_begin  = func.args[index].begin;
+        entry.n_end    = func.args[index].end;
+        entry.data.var = EvaluateExpressionTree(x);
+        index          = index + 1;
+        current_scope->table.push_back(entry);
+    }
+
+    auto val = EvaluateExpressionTree(func.body);
+    return val;
+    scopes.PopStack();
+}
+
+InternDataType HandleUserDefinedFunctions(Expression *expr)
+{
+    InternDataType val = {.tag = DataTypeTag::Id};
+    val.data.id.begin  = expr->op.begin;
+    val.data.id.end    = expr->op.end;
+
+    auto current_scope = scopes.GetStackTop();
+    auto entry         = scopes.GetSymbolEntry(val);
+    Assert(entry != nullptr);
+
+    return EvalUserDefinedFunction(expr, entry->data.func);
+}
+
+InternDataType HandleBuiltinFunctions(Expression *expr)
+{
+    if (lib::StrCmpEqual(expr->op.begin, expr->op.end, UNPACK_STR("define")))
+    {
+        // Read  the next symbol its value and push to the symbol table stack
+        // Get the first child and assign  the  value of the second child
+        using Type                     = SymbolTableEntry::EntryType;
+
+        auto             current_scope = scopes.GetStackTop();
+        SymbolTableEntry entry;
+
+        const auto      &f = expr->childs[0];
+        if (f->val.tag == DataTypeTag::Id)
+        {
+
+            entry.entry_type = Type::Var;
+            // Fully evaluate the second child
+
+            auto s           = EvaluateExpressionTree(expr->childs[1]);
+            entry.n_begin    = f->val.data.id.begin;
+            entry.n_end      = f->val.data.id.end;
+
+            entry.entry_type = Type::Var;
+            entry.data.var   = s;
+
+            current_scope->table.push_back(entry);
+            current_scope->dump();
+            return InternDataType{DataTypeTag::None};
+        }
+        //  This one  is too responsible for parsing functions too
+        //  Parse  the function  and the body
+
+        // First child contains the name of the functions and the formal parameters
+        // Second child contains the definition  of the function
+
+        // Shall we use evaulative style function calling or the replacement one?
+        // Lets try the Scheme way substitution one, which is evaluated only when the functions are called not when
+        // defined though
+
+        Funcs fn;
+        entry.entry_type = Type::Function;
+
+        entry.n_begin    = f->op.begin;
+        entry.n_end      = f->op.end;
+
+        // Child of the first args tagged as id are the list of the formal parameters of this function
+
+        for (auto const &param : f->childs)
+        {
+            Assert(fn.args_count < fn.MAX_ARGS - 1);
+
+            fn.args[fn.args_count].begin = param->val.data.id.begin;
+            fn.args[fn.args_count].end   = param->val.data.id.end;
+
+            fn.args_count                = fn.args_count + 1;
+
+            Assert(param->leaf);
+            GetSingletonLogger().Log("\nParams are :  ",
+                                     std::string_view((const char *)param->val.data.id.begin,
+                                                      u32(param->val.data.id.end - param->val.data.id.begin + 1)));
+        }
+
+        fn.body         = expr->childs[1];
+        entry.data.func = fn;
+
+        current_scope->table.push_back(entry);
+
+        // Unimplemented();
+        return InternDataType{DataTypeTag::None};
+    }
+    return HandleUserDefinedFunctions(expr);
+    // Unimplemented();
 }
 
 InternDataType EvaluateExpressionTree(Expression *expr)
 {
-    // if (expr->op == Operator::None)
-    //     return expr->val;
-    // switch (expr->op)
-    //{
-    // case Operator::Add:
-    //     return AddExpressions(expr->childs);
-    // case Operator::Sub:
-    //     return SubExpressions(expr->childs);
-    // default:
-    //     Unimplemented();
-    // }
     if (expr->leaf)
         return EvaluateLeaf(expr);
 
@@ -179,8 +499,12 @@ InternDataType EvaluateExpressionTree(Expression *expr)
     if (lib::StrCmpEqual(expr->op.begin, expr->op.end, UNPACK_STR("-")))
         return SubExpressions(expr->childs);
 
-    Unimplemented();
+    if (lib::StrCmpEqual(expr->op.begin, expr->op.end, UNPACK_STR("*")))
+        return MultiplyExpressions(expr->childs);
+
+    if (lib::StrCmpEqual(expr->op.begin, expr->op.end, UNPACK_STR("/")))
+        return DivideExpressions(expr->childs);
+
+    return HandleBuiltinFunctions(expr);
 }
 } // namespace Eval
-
-export void MyFunc();

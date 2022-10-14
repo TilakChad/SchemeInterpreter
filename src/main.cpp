@@ -2,29 +2,37 @@ import Lexer;
 import Parser;
 import Eval;
 import Log;
+import Lib;
 
 #include "../include/types.hpp"
 #include <iostream>;
 #include <fstream>
 #include <sstream>
 
+void TestList()
+{
+    lib::List<u32> lst;
+    lst.AddNode(1);
+    lst.AddNode(3);
+    lst.AddNode(6);
+    lst.AddNode(8);
+
+    auto get_node = lst.SearchNode(6);
+    lst.RemoveNode(get_node);
+    lst.RemoveNode(8);
+    std::cout << lst << std::endl;
+}
+
 int main(int argc, char **argv)
 {
     // Tokenizer     tokenizer((const u8 *)"(+ 3 (+ 1 2 3) (+ 3 2 1) (- 4 3) ) $", 0, 40);
     std::ifstream src_code("./lisp/test.lisp", std::ios::binary | std::ios::in);
 
-    if (src_code.is_open())
+    if (!src_code)
     {
-    }
-    else
-    {
-        GetSingletonLogger().Log("Failed  to open file :  ", "../lisp/test.lisp", __LINE__);
+        GetSingletonLogger().Log("Failed  to open file :  ", "../lisp/test.lisp ", __LINE__, "   ");
     }
 
-    // Token     next = tokenizer.next();
-    // auto      z    = Parse::ParseAs<i16>(next);
-    // auto      y    = Parse::ParseAs<u32>(tokenizer.next());
-    // std::cout << z << y << std::endl;
     std::string code;
     {
         std::stringstream stream;
@@ -33,16 +41,22 @@ int main(int argc, char **argv)
         code.push_back('$');
     }
 
-    Parser                  parser;
-    Tokenizer tokenizer((const u8 *)code.data(), 0, code.size()); 
+    Parser        parser;
+    Tokenizer     tokenizer((const u8 *)code.data(), 0, code.size());
+
+    constexpr u32 N = 3;
+
+    for (auto i = 0; i < N; ++i)
+    {
+        parser.ParseStart(tokenizer);
+        parser.EvalAST();
+    }
 
     parser.ParseStart(tokenizer);
-    // Eval::InternDataType a1 = {Eval::DataTypeTag::Int, 50};
-    // Eval::InternDataType a2 = {Eval::DataTypeTag::Int, 6};
-    // auto                 result = Eval::ApplyOpIntern(a1, a2, [](i32 x, i32 y) { return x + y;
-    // },Eval::DataTypeTag::Int); std::cout << "Result : " << result.data.integer;
-    std::cout << "Result of Evaluation : " << parser.EvalAST().data.integer << std::endl;
 
-    std::cout << GetSingletonLogger().dump();
+    auto re = parser.EvalAST();
+    std::cout << "Result of Evaluation : " << re.data.integer << std::endl;
+
+    std::cout << GetSingletonLogger().dump() << std::endl;
     return 0;
 }

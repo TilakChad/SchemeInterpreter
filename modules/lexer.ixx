@@ -3,12 +3,13 @@
 #include <cstdint>
 
 #include <type_traits>
+#include <variant>
 #include <numeric>
 
 #include "../include/types.hpp"
 #include "../include/macros.hpp"
 
-#define CheckWhiteSpace(ch) ((ch) == ' ' || (ch) == '\n' || (ch) == '\t')
+#define CheckWhiteSpace(ch) ((ch) == ' ' || (ch) == '\n' || (ch) == '\t') || ch == '\r'
 
 #define CheckDigit(ch) ((ch) >= '0' && (ch) <= '9')
 #define CheckAlpha(ch) (((ch) >= 'a' && (ch) <= 'z') || ((ch) >= 'A' && (ch) <= 'Z'))
@@ -27,6 +28,7 @@ export enum class TokenType
     LesserEqual,
     GreaterEqual,
     Lesser,
+    Asterisk,
     Greater,
     NotEqual,
     Slash, // To denote the backward slash
@@ -48,17 +50,31 @@ export enum class TokenType
 
 struct Number
 {
+    std::variant<std::monostate, i64, f64> num;
+
+    i64                                    GetInt()
+    {
+        return std::get<i64>(num);
+    }
+
+    f64 GetReal()
+    {
+        return std::get<f64>(num);
+    }
 };
 
 export class Token
 {
   public:
     TokenType type = TokenType::None;
+
     struct
     {
         const u8 *begin = nullptr;
         const u8 *end   = nullptr;
     } ptrs;
+
+    Number num;
 
     Token(TokenType t) : type{t}
     {
@@ -109,7 +125,9 @@ export class Tokenizer
         if (pos >= len)
             return Token(TokenType::End);
 
-        if (TryParseNumber(token))
+        /*if (TryParseNumber(token))
+            return token;*/
+        if (ParseNumber(token))
             return token;
 
         u8   next_byte = stream[pos + 1];
@@ -141,14 +159,16 @@ export class Tokenizer
             token.ptrs.begin = token.ptrs.end = stream + pos - 1;
             break;
         case '-':
-            token.type = Minus;
+            token.type       = Minus;
             token.ptrs.begin = token.ptrs.end = stream + pos - 1;
             break;
         case '*':
-            token.type = Div;
+            token.type       = Asterisk;
+            token.ptrs.begin = token.ptrs.end = stream + pos - 1;
             break;
         case '/':
-            token.type = Slash;
+            token.type       = Slash;
+            token.ptrs.begin = token.ptrs.end = stream + pos - 1;
             break;
         case '(':
             token.type = OParen;
@@ -170,7 +190,7 @@ export class Tokenizer
                 token.ptrs.begin = stream + pos;
                 while (CheckAlphaNumeric(stream[pos]))
                     pos++;
-                token.ptrs.begin = stream + pos - 1;
+                token.ptrs.end = stream + pos - 1;
             }
         }
         col = pos - last_lin;
@@ -180,6 +200,96 @@ export class Tokenizer
     u64 GetLineAndCol() const
     {
         return (lin << 32) | col;
+    }
+
+    bool ParseNumber(Token &result)
+    {
+        u32  state    = 0;
+        u32  tpos     = pos;
+        bool negative = false;
+        if (!CheckDigit(stream[pos]) && !((stream[pos] == '-' && CheckDigit(stream[pos + 1]))))
+            return false;
+
+        if (stream[pos] == '-')
+        {
+            pos      = pos + 1;
+            negative = true;
+        }
+
+        // TODO :: Check for errors
+        while (pos < len)
+        {
+            if (stream[pos] != '.' && !CheckDigit(stream[pos]))
+                break;
+
+            u8 ch = stream[pos++];
+            switch (state)
+            {
+            case 0:
+                if (CheckDigit(ch))
+                    state = 1;
+                else
+                    state = 5;
+                break;
+
+            case 1:
+                if (CheckDigit(ch))
+                    state = 1;
+                else if (ch == '.')
+                    state = 2;
+                else
+                    state = 5;
+                break;
+            case 2:
+                if (CheckDigit(ch))
+                    state = 2;
+                else
+                    state = 5;
+                break;
+            default:
+                break;
+            }
+        }
+
+        auto mpos = pos;
+        pos       = tpos;
+
+        if (state == 1)
+        {
+            // Parse as  int
+            result.type = TokenType::Number;
+            i64 val     = 0;
+
+            while (pos < mpos)
+                val = val * 10 + (stream[pos++] - '0');
+
+            val            = negative ? -val : val;
+            result.num.num = val;
+            return true;
+        }
+
+        if (state == 2)
+        {
+            // Parse as float
+            result.type = TokenType::Number;
+            f64 val     = 0;
+
+            while (stream[pos] != '.')
+                val = val * 10 + stream[pos++] - '0';
+
+            pos   = pos + 1; // Since  it  was obtained after cancelling pos
+            u32 p = 10;
+
+            while (pos < mpos)
+            {
+                val = val + f64((stream[pos++] - '0')) / p;
+                p   = p * 10;
+            }
+
+            result.num.num = val;
+            return true;
+        }
+        return false;
     }
 
     bool TryParseNumber(Token &result)

@@ -41,7 +41,8 @@ export class Parser
         expr->op.begin          = token.ptrs.begin;
         expr->op.end            = token.ptrs.end;
 
-        token                   = tokenizer.next();
+        if (token.type != TokenType::OParen)
+            token = tokenizer.next();
 
         while (token.type != TokenType::CParen && token.type != TokenType::End)
         {

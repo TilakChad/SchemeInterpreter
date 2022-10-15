@@ -8,30 +8,15 @@
 
 namespace ranges = std::ranges;
 
+#define UNPACK_STR(str) (const u8 *)str, sizeof(str) - 1
+
 import Log;
+import Lib;
 
 export module Eval;
-import Lib;
 
 export namespace Eval
 {
-
-export enum class Operator
-{
-    Func,
-    Add,
-    Sub,
-    Div,
-    Mul,
-    None
-};
-
-struct OperatorS
-{
-    // References the original string
-    const u8 *begin = nullptr;
-    const u8 *end   = nullptr;
-};
 
 template <typename Callable, typename... Args> auto ApplyFunc(Callable &&c, Args... args)
 {
@@ -48,25 +33,34 @@ export enum class DataTypeTag
     None
 };
 
+struct InternDataType;
+
+template <typename T>
+concept NativeType = std::is_same_v<T, i64> || std::is_same_v<T, f64> || std::is_same_v<T, TwoBytePtrs> ||
+    std::is_same_v<T, lib::List<InternDataType>> || std::is_same_v<T, TwoBytePtrs>;
+
 export struct InternDataType
 {
+
     DataTypeTag tag; // Tag isn't required if variants are used
 
     // std::variant<std::monostate, std::vector<InternDataType>, i64, f64, usize> data; // use visitor patterns for this
     union
     {
-        i64 integer;
-        f64 real = 0.0f;
+        i64                       integer;
+        f64                       real = 0.0f;
 
-        struct
-        {
-            const u8 *begin; // Maybe storing a length would be nicer
-            const u8 *end;
-        } id;
+        TwoBytePtrs               id;
 
         usize                     ptr;
         lib::List<InternDataType> list;
     } data;
+
+    template <typename U>
+    requires NativeType<U> U &get_value()
+    {
+        return *(U *)&data;
+    }
 };
 
 struct Macros
@@ -77,18 +71,12 @@ struct Expression;
 
 struct Funcs
 {
-    static constexpr u32 MAX_ARGS   = 10;
-    u32                  args_count = 0;
+    static constexpr u32 MAX_ARGS       = 10;
+    u32                  args_count     = 0;
 
-    struct Str
-    {
-        const u8 *begin;
-        const u8 *end;
-    };
+    TwoBytePtrs          args[MAX_ARGS] = {};
 
-    Str         args[MAX_ARGS] = {};
-
-    Expression *body; // ?? Is it the right way of doing this?
+    Expression          *body; // ?? Is it the right way of doing this?
 };
 
 struct Lambda
@@ -107,10 +95,10 @@ struct SymbolTableEntry
         None
     };
 
-    SymbolTableEntry()   = default;
+    SymbolTableEntry()     = default;
 
-    EntryType entry_type = EntryType::None;
-    const u8 *n_begin, *n_end;
+    EntryType   entry_type = EntryType::None;
+    TwoBytePtrs name;
 
     union
     {
@@ -132,7 +120,7 @@ struct SymbolTable
         {
             GetSingletonLogger().Log(
                 types[u32(x.entry_type)], " :  ",
-                std::string_view((const char *)x.n_begin, static_cast<size_t>(x.n_end - x.n_begin + 1)));
+                std::string_view((const char *)x.name.begin, static_cast<size_t>(x.name.end - x.name.begin + 1)));
         }
     }
 
@@ -141,7 +129,8 @@ struct SymbolTable
         auto it = ranges::find_if(table, [&](auto const &elem) {
             if (true) //(elem.entry_type == SymbolTableEntry::EntryType::Var)
             {
-                if (lib::StrCmpEqual(type.data.id.begin, type.data.id.end, elem.n_begin, elem.n_end - elem.n_begin + 1))
+                if (lib::StrCmpEqual(type.data.id.begin, type.data.id.end, elem.name.begin,
+                                     elem.name.end - elem.name.begin + 1))
                     return true;
             }
             return false;
@@ -174,7 +163,7 @@ struct ScopeStack
 
     SymbolTableEntry *GetSymbolEntry(InternDataType &key)
     {
-        for (auto begin = scope_stack.head; scope_stack.head != scope_stack.GetSentinel(); begin = begin->next)
+        for (auto begin = scope_stack.head; begin != scope_stack.GetSentinel(); begin = begin->next)
         {
             if (auto x = begin->data.GetEntryInTable(key); x)
                 return x;
@@ -194,7 +183,7 @@ struct Expression
     Expression()                   = default;
 
     bool                      leaf = false;
-    OperatorS                 op; // if there are multiple types apply it recursively
+    TwoBytePtrs               op; // if there are multiple types apply it recursively
     InternDataType            val;
     std::vector<Expression *> childs;
 };
@@ -273,6 +262,75 @@ InternDataType AddExpressions(std::vector<Expression *> &childs)
     return result;
 }
 
+InternDataType ApplyLogicalAnd(Expression *expr)
+{
+    using enum DataTypeTag;
+    // auto data = Transform(expr->childs, EvaluateExpressionTree);
+    Assert(expr->childs.size());
+
+    bool cond = true; // Empty conditions not allowed, do short  circuit evaluation --> which is strictly required
+
+    for (auto &x : expr->childs)
+    {
+        auto val = EvaluateExpressionTree(x);
+        cond     = cond && val.data.integer;
+        if (!cond)
+            break;
+    }
+    return {Int, cond};
+}
+
+InternDataType ApplyLogicalOr(Expression *expr)
+{
+    using enum DataTypeTag;
+    Assert(expr->childs.size());
+
+    bool cond = false; // Empty conditions not allowed, does short  circuit evaluation --> which is strictly required
+
+    for (auto &x : expr->childs)
+    {
+        auto val = EvaluateExpressionTree(x);
+        cond     = cond || val.data.integer;
+        if (cond)
+            break;
+    }
+    return {Int, cond};
+}
+
+InternDataType ApplyLogicalNot(Expression *expr)
+{
+    using enum DataTypeTag;
+    Assert(expr->childs.size() == 1);
+    return {Int, !EvaluateExpressionTree(expr->childs[0]).data.integer};
+}
+
+InternDataType ApplyComparisons(const InternDataType &x1, const InternDataType &x2, auto &&callable)
+{
+    using enum DataTypeTag;
+
+    switch (x1.tag)
+    {
+    case Int:
+    {
+        if (x2.tag == Int)
+            return {Int, callable(x1.data.integer, x2.data.integer)};
+        if (x2.tag == Real)
+            return {Int, callable(x1.data.integer, x2.data.real)};
+    }
+    break;
+
+    case Real:
+    {
+        if (x2.tag == Real)
+            return InternDataType{Int, callable(x1.data.real, x2.data.real)};
+        if (x2.tag == Int)
+            return InternDataType{Int, callable(x1.data.real, x2.data.integer)};
+    }
+    default:
+        Unimplemented();
+    }
+}
+
 InternDataType MultiplyExpressions(std::vector<Expression *> &childs)
 {
     auto data = Transform(childs, EvaluateExpressionTree);
@@ -338,8 +396,6 @@ InternDataType SubExpressions(std::vector<Expression *> &childs)
     return result;
 }
 
-#define UNPACK_STR(str) (const u8 *)str, sizeof(str) - 1
-
 InternDataType EvaluateLeaf(Expression *expr)
 {
     using enum DataTypeTag;
@@ -385,25 +441,40 @@ InternDataType EvalUserDefinedFunction(Expression *expr, Funcs &func)
 
     u32 index        = 0;
 
-    for (auto x : expr->childs)
+    // TODO :: Fix this function call to possibly support infinite data structures 
+
+    auto transformed  = Transform(expr->childs, EvaluateExpressionTree);
+
+    for (auto x : transformed)
     {
-        entry.n_begin  = func.args[index].begin;
-        entry.n_end    = func.args[index].end;
-        entry.data.var = EvaluateExpressionTree(x);
-        index          = index + 1;
+        entry.name     = func.args[index];
+        entry.data.var = x;
+
+        GetSingletonLogger().Log(std::string_view((const char *)entry.name.begin, 1), "  ", entry.data.var.data.integer,
+                           '\n');
+        
+        index = index + 1;
         current_scope->table.push_back(entry);
     }
 
-    auto val = EvaluateExpressionTree(func.body);
-    return val;
+    GetSingletonLogger().Log('\n');
+
+    InternDataType retval = {DataTypeTag::None};
+
+    // Open new scope -> already opened
+    for (u32 index = 1; index < func.body->childs.size(); ++index)
+        retval = EvaluateExpressionTree(func.body->childs[index]);
+
+    // EvaluateExpressionTree(func.body->childs[1]);
     scopes.PopStack();
+    // Return the last evaluated value
+    return retval;
 }
 
 InternDataType HandleUserDefinedFunctions(Expression *expr)
 {
     InternDataType val = {.tag = DataTypeTag::Id};
-    val.data.id.begin  = expr->op.begin;
-    val.data.id.end    = expr->op.end;
+    val.data.id        = expr->op;
 
     auto current_scope = scopes.GetStackTop();
     auto entry         = scopes.GetSymbolEntry(val);
@@ -431,8 +502,7 @@ InternDataType HandleBuiltinFunctions(Expression *expr)
             // Fully evaluate the second child
 
             auto s           = EvaluateExpressionTree(expr->childs[1]);
-            entry.n_begin    = f->val.data.id.begin;
-            entry.n_end      = f->val.data.id.end;
+            entry.name       = f->val.data.id;
 
             entry.entry_type = Type::Var;
             entry.data.var   = s;
@@ -448,14 +518,13 @@ InternDataType HandleBuiltinFunctions(Expression *expr)
         // Second child contains the definition  of the function
 
         // Shall we use evaulative style function calling or the replacement one?
-        // Lets try the Scheme way substitution one, which is evaluated only when the functions are called not when
-        // defined though
+        // Lets try the Scheme way substitution one, which is evaluated only when the functions are called not
+        // when defined though
 
         Funcs fn;
         entry.entry_type = Type::Function;
 
-        entry.n_begin    = f->op.begin;
-        entry.n_end      = f->op.end;
+        entry.name       = f->op;
 
         // Child of the first args tagged as id are the list of the formal parameters of this function
 
@@ -474,7 +543,9 @@ InternDataType HandleBuiltinFunctions(Expression *expr)
                                                       u32(param->val.data.id.end - param->val.data.id.begin + 1)));
         }
 
-        fn.body         = expr->childs[1];
+        // push all the segments as the body
+        fn.body = expr; //  Remember : while evaluating  the function skip the first child  and continue
+        // fn.body         = expr->childs[1];
         entry.data.func = fn;
 
         current_scope->table.push_back(entry);
@@ -482,6 +553,54 @@ InternDataType HandleBuiltinFunctions(Expression *expr)
         // Unimplemented();
         return InternDataType{DataTypeTag::None};
     }
+
+    if (lib::StrCmpEqual(expr->op.begin, expr->op.end, UNPACK_STR("cond")))
+    {
+        //  (cond ((< a b) a)
+        //        (else  b))
+        // Iterate over every child
+        for (auto &branch : expr->childs)
+        {
+            // special case ... if the predicate is else, evaluate it true without evaluating it further
+            // It could be made redundant though.
+            if (lib::StrCmpEqual(branch->op.begin, branch->op.end, UNPACK_STR("else")))
+                return EvaluateExpressionTree(branch->childs[0]);
+
+            auto res = EvaluateExpressionTree(branch->childs[0]);
+            if (res.tag == DataTypeTag::Int && res.data.integer)
+            {
+                return EvaluateExpressionTree(branch->childs[1]);
+            }
+        }
+        Unimplemented();
+    }
+
+    if (lib::StrCmpEqual(expr->op.begin, expr->op.end, UNPACK_STR("if")))
+    {
+        //  (cond ((< a b) a)
+        //        (else  b))
+        // Iterate over every child
+        auto res = EvaluateExpressionTree(expr->childs[0]);
+
+        Assert(expr->childs.size() == 3);
+
+        if (res.tag == DataTypeTag::Int && res.data.integer)
+        {
+            return EvaluateExpressionTree(expr->childs[1]);
+        }
+        else
+            return EvaluateExpressionTree(expr->childs[2]);
+
+        Unimplemented();
+    }
+
+    if (lib::StrCmpEqual(expr->op.begin, expr->op.end, UNPACK_STR("and")))
+        return ApplyLogicalAnd(expr);
+    if (lib::StrCmpEqual(expr->op.begin, expr->op.end, UNPACK_STR("or")))
+        return ApplyLogicalOr(expr);
+    if (lib::StrCmpEqual(expr->op.begin, expr->op.end, UNPACK_STR("not")))
+        return ApplyLogicalNot(expr);
+
     return HandleUserDefinedFunctions(expr);
     // Unimplemented();
 }
@@ -493,6 +612,7 @@ InternDataType EvaluateExpressionTree(Expression *expr)
 
     usize len = expr->op.begin - expr->op.begin;
 
+    // All of these could be defined internally as library functions
     if (lib::StrCmpEqual(expr->op.begin, expr->op.end, UNPACK_STR("+")))
         return AddExpressions(expr->childs);
 
@@ -504,6 +624,31 @@ InternDataType EvaluateExpressionTree(Expression *expr)
 
     if (lib::StrCmpEqual(expr->op.begin, expr->op.end, UNPACK_STR("/")))
         return DivideExpressions(expr->childs);
+
+    if (lib::StrCmpEqual(expr->op.begin, expr->op.end, UNPACK_STR("<")))
+        return ApplyComparisons(EvaluateExpressionTree(expr->childs[0]), EvaluateExpressionTree(expr->childs[1]),
+                                [](auto x, auto y) { return x < y; });
+
+    if (lib::StrCmpEqual(expr->op.begin, expr->op.end, UNPACK_STR(">")))
+        return ApplyComparisons(EvaluateExpressionTree(expr->childs[0]), EvaluateExpressionTree(expr->childs[1]),
+                                [](auto x, auto y) { return x > y; });
+
+    if (lib::StrCmpEqual(expr->op.begin, expr->op.end, UNPACK_STR("=")))
+        return ApplyComparisons(EvaluateExpressionTree(expr->childs[0]), EvaluateExpressionTree(expr->childs[1]),
+                                [](auto x, auto y) { return x == y; });
+
+    if (lib::StrCmpEqual(expr->op.begin, expr->op.end, UNPACK_STR("<=")))
+        return ApplyComparisons(EvaluateExpressionTree(expr->childs[0]), EvaluateExpressionTree(expr->childs[1]),
+                                [](auto x, auto y) {
+                                    std::cout << typeid(x).name() << typeid(y).name();
+                                    return x <= y;
+                                });
+
+    if (lib::StrCmpEqual(expr->op.begin, expr->op.end, UNPACK_STR(">=")))
+        return ApplyComparisons(EvaluateExpressionTree(expr->childs[0]), EvaluateExpressionTree(expr->childs[1]),
+                                [](auto x, auto y) { return x >= y; });
+
+    // HandleCompareExpresions(expr);
 
     return HandleBuiltinFunctions(expr);
 }

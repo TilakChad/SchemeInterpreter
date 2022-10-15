@@ -5,7 +5,7 @@ import Log;
 import Lib;
 
 #include "../include/types.hpp"
-#include <iostream>;
+#include <iostream>
 #include <fstream>
 #include <sstream>
 
@@ -26,7 +26,7 @@ void TestList()
 int main(int argc, char **argv)
 {
     // Tokenizer     tokenizer((const u8 *)"(+ 3 (+ 1 2 3) (+ 3 2 1) (- 4 3) ) $", 0, 40);
-    std::ifstream src_code("./lisp/test.lisp", std::ios::binary | std::ios::in);
+    std::ifstream src_code("./lisp/ackermann.lisp", std::ios::binary | std::ios::in);
 
     if (!src_code)
     {
@@ -42,9 +42,9 @@ int main(int argc, char **argv)
     }
 
     Parser        parser;
-    Tokenizer     tokenizer((const u8 *)code.data(), 0, code.size());
+    Tokenizer     tokenizer((const u8 *)code.data(), 0, (u32)code.size());
 
-    constexpr u32 N = 3;
+    constexpr u32 N = 1;
 
     for (auto i = 0; i < N; ++i)
     {
@@ -52,10 +52,19 @@ int main(int argc, char **argv)
         parser.EvalAST();
     }
 
+    auto valprint = [&](auto &x) -> auto
+    {
+        if (x.tag == Eval::DataTypeTag::Int)
+            std::cout << x.data.integer;
+        else
+            std::cout << x.data.real;
+    };
+
     parser.ParseStart(tokenizer);
 
     auto re = parser.EvalAST();
-    std::cout << "Result of Evaluation : " << re.data.integer << std::endl;
+    std::cout << "Result of Evaluation : ";
+    valprint(re);
 
     std::cout << GetSingletonLogger().dump() << std::endl;
     return 0;

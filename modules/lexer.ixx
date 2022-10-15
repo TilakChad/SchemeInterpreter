@@ -103,6 +103,7 @@ export class Tokenizer
             return lookahead_m;
         lookahead_m     = next();
         lookahead_valid = true;
+        return lookahead_m;
     }
 
     Token next()
@@ -133,13 +134,17 @@ export class Tokenizer
         u8   next_byte = stream[pos + 1];
 
         auto CompundOp = [&](auto next, auto is, auto no) {
+            token.ptrs.begin = stream + pos - 1;
+
             if (next_byte == next)
             {
                 pos++;
-                token.type == is;
+                token.type       = is;
+                token.ptrs.end = stream + pos - 1;
                 return;
             }
-            token.type = no;
+            token.type     = no;
+            token.ptrs.end = stream + pos - 1;
         };
 
         switch (stream[pos++])
@@ -199,13 +204,12 @@ export class Tokenizer
 
     u64 GetLineAndCol() const
     {
-        return (lin << 32) | col;
+        return ((u64)lin << 32) | col;
     }
 
     bool ParseNumber(Token &result)
     {
         u32  state    = 0;
-        u32  tpos     = pos;
         bool negative = false;
         if (!CheckDigit(stream[pos]) && !((stream[pos] == '-' && CheckDigit(stream[pos + 1]))))
             return false;
@@ -215,6 +219,7 @@ export class Tokenizer
             pos      = pos + 1;
             negative = true;
         }
+        u32  tpos     = pos;
 
         // TODO :: Check for errors
         while (pos < len)

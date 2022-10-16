@@ -600,6 +600,8 @@ InternDataType HandleBuiltinFunctions(Expression *expr)
         return ApplyLogicalOr(expr);
     if (lib::StrCmpEqual(expr->op.begin, expr->op.end, UNPACK_STR("not")))
         return ApplyLogicalNot(expr);
+    if (lib::StrCmpEqual(expr->op.begin, expr->op.end, UNPACK_STR("remainder")))
+        return InternDataType{DataTypeTag::Int, EvaluateExpressionTree(expr->childs[0]).data.integer % EvaluateExpressionTree(expr->childs[1]).data.integer};
 
     return HandleUserDefinedFunctions(expr);
     // Unimplemented();

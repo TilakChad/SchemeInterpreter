@@ -126,6 +126,32 @@ export class Tokenizer
         if (pos >= len)
             return Token(TokenType::End);
 
+        // Ignores the comments
+        while(stream[pos] == ';' && stream[pos + 1] == ';')
+        {
+            pos = pos + 2;
+            while (pos < len)
+            {
+                if (stream[pos] == '\n')
+                {
+                    pos = pos + 1;
+                    if (stream[pos] == '\r')
+                        pos = pos + 1;
+                    break;
+                }
+                pos = pos + 1;
+            }
+            // TODO :: Update the line number  
+            while (pos < len && CheckWhiteSpace(stream[pos]))
+            {
+                lin      = lin + stream[pos] == '\n';
+                last_lin = pos;
+                pos++;
+            }
+            if (pos >= len)
+                return Token(TokenType::End);
+        }
+
         /*if (TryParseNumber(token))
             return token;*/
         if (ParseNumber(token))
@@ -139,7 +165,7 @@ export class Tokenizer
             if (next_byte == next)
             {
                 pos++;
-                token.type       = is;
+                token.type     = is;
                 token.ptrs.end = stream + pos - 1;
                 return;
             }
@@ -181,10 +207,12 @@ export class Tokenizer
         case ')':
             token.type = CParen;
             break;
+        case '$':
+            token.type = End;
+            break;
         case '\\':
             token.type = Div;
             break;
-
         default:
             // Parse as identifier
             {
@@ -219,7 +247,7 @@ export class Tokenizer
             pos      = pos + 1;
             negative = true;
         }
-        u32  tpos     = pos;
+        u32 tpos = pos;
 
         // TODO :: Check for errors
         while (pos < len)

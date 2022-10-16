@@ -15,11 +15,14 @@ export class Parser
     Eval::Expression *ast;
 
   public:
-    void ParseStart(Tokenizer &tokenizer)
+    bool ParseStart(Tokenizer &tokenizer)
     {
         auto next = tokenizer.next();
+        if (next.type == TokenType::End)
+            return false;
         Assert(next.type == TokenType::OParen);
         ast = CreateExpressionTree(tokenizer);
+        return true;
     }
 
     Eval::InternDataType EvalAST()

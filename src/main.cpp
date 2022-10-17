@@ -8,6 +8,8 @@ import Lib;
 #include <iostream>
 #include <fstream>
 #include <sstream>
+#include <cstdlib>
+#include <ctime>
 
 void TestList()
 {
@@ -26,11 +28,13 @@ void TestList()
 int main(int argc, char **argv)
 {
     // Tokenizer     tokenizer((const u8 *)"(+ 3 (+ 1 2 3) (+ 3 2 1) (- 4 3) ) $", 0, 40);
-    std::ifstream src_code("./lisp/ex1_11.lisp", std::ios::binary | std::ios::in);
+    std::ifstream src_code("./lisp/fermat.lisp", std::ios::binary | std::ios::in);
 
+    // This one's not good but meh
+    srand(time(NULL)); 
     if (!src_code)
     {
-        GetSingletonLogger().Log("Failed  to open file :  ", "../lisp/test.lisp ", __LINE__, "   ");
+        GetSingletonLogger().Log("Failed  to open file :  ", "../lisp/fermat.lisp ", __LINE__, "   ");
     }
 
     std::string code;

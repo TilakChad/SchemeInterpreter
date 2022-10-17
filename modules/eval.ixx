@@ -30,6 +30,7 @@ export enum class DataTypeTag
     Real,
     Ptr,
     Id, // Or id that needs to be resolved or errored
+    Lambda,
     None
 };
 
@@ -38,30 +39,6 @@ struct InternDataType;
 template <typename T>
 concept NativeType = std::is_same_v<T, i64> || std::is_same_v<T, f64> || std::is_same_v<T, TwoBytePtrs> ||
     std::is_same_v<T, lib::List<InternDataType>> || std::is_same_v<T, TwoBytePtrs>;
-
-export struct InternDataType
-{
-
-    DataTypeTag tag; // Tag isn't required if variants are used
-
-    // std::variant<std::monostate, std::vector<InternDataType>, i64, f64, usize> data; // use visitor patterns for this
-    union
-    {
-        i64                       integer;
-        f64                       real = 0.0f;
-
-        TwoBytePtrs               id;
-
-        usize                     ptr;
-        lib::List<InternDataType> list;
-    } data;
-
-    template <typename U>
-    requires NativeType<U> U &get_value()
-    {
-        return *(U *)&data;
-    }
-};
 
 struct Macros
 {
@@ -79,8 +56,44 @@ struct Funcs
     Expression          *body; // ?? Is it the right way of doing this?
 };
 
+struct SymbolTable;
+
 struct Lambda
 {
+    // Lambda are anonymous functions nothing fancy
+    // Clone whole the symbol table, its the easiest solution, but the least efficient one
+    // (lambda(x)(* x y)) -> y is to be evaluated from the surrounding scope
+    // One solution is to traverse the function body and replace the symbols not defined as lambda parameters,its not
+    // straightforward to implement it though
+    Funcs        func;
+    TwoBytePtrs  name;
+    SymbolTable *closure;
+};
+
+export struct InternDataType
+{
+
+    DataTypeTag tag; // Tag isn't required if variants are used
+
+    // std::variant<std::monostate, std::vector<InternDataType>, i64, f64, usize> data; // use visitor patterns for this
+    union
+    {
+        i64                       integer;
+        f64                       real = 0.0f;
+
+        TwoBytePtrs               id;
+
+        usize                     ptr;
+        lib::List<InternDataType> list;
+
+        Lambda                    lambda;
+    } data;
+
+    template <typename U>
+    requires NativeType<U> U &get_value()
+    {
+        return *(U *)&data;
+    }
 };
 
 struct SymbolTableEntry
@@ -155,7 +168,7 @@ struct ScopeStack
         return &scope_stack.GetFirstNode()->data;
     }
 
-    SymbolTable *PushStack(SymbolTable &table)
+    SymbolTable *PushStack(const SymbolTable &table)
     {
         scope_stack.AddNode(table);
         return &scope_stack.GetFirstNode()->data;
@@ -429,7 +442,6 @@ InternDataType EvalUserDefinedFunction(Expression *expr, Funcs &func)
     using Type = SymbolTableEntry::EntryType;
 
     SymbolTable table;
-
     scopes.PushStack(table);
     // Enter the entry as specified in order
     auto             current_scope = scopes.GetStackTop();
@@ -438,12 +450,11 @@ InternDataType EvalUserDefinedFunction(Expression *expr, Funcs &func)
     Assert(expr->childs.size() == func.args_count); // args count mismatch
 
     entry.entry_type = Type::Var;
-
     u32 index        = 0;
 
-    // TODO :: Fix this function call to possibly support infinite data structures 
+    // TODO :: Fix this function call to possibly support infinite data structures
 
-    auto transformed  = Transform(expr->childs, EvaluateExpressionTree);
+    auto transformed = Transform(expr->childs, EvaluateExpressionTree);
 
     for (auto x : transformed)
     {
@@ -451,8 +462,60 @@ InternDataType EvalUserDefinedFunction(Expression *expr, Funcs &func)
         entry.data.var = x;
 
         GetSingletonLogger().Log(std::string_view((const char *)entry.name.begin, 1), "  ", entry.data.var.data.integer,
-                           '\n');
-        
+                                 '\n');
+
+        index = index + 1;
+        current_scope->table.push_back(entry);
+    }
+
+    GetSingletonLogger().Log('\n');
+
+    InternDataType retval = {DataTypeTag::None};
+    // Open new scope -> already opened
+    for (u32 index = 1; index < func.body->childs.size(); ++index)
+        retval = EvaluateExpressionTree(func.body->childs[index]);
+
+    // EvaluateExpressionTree(func.body->childs[1]);
+    scopes.PopStack();
+    // Return the last evaluated value
+    return retval;
+}
+
+InternDataType EvaluateLambda(Expression *expr, InternDataType &val)
+{
+    Assert(val.tag == DataTypeTag::Lambda);
+
+    // scopes.PushStack(*val.data.lambda.closure);
+    // auto res = EvalUserDefinedFunction(expr, val.data.lambda.func);
+    // scopes.PopStack();
+    // return res;
+
+    using Type         = SymbolTableEntry::EntryType;
+    auto       &func   = val.data.lambda.func;
+    auto const &lambda = val.data.lambda;
+    // Above doesn't work with same lambda capture and args
+    SymbolTable table;
+    scopes.PushStack(table);
+    // Enter the entry as specified in order
+    auto             current_scope = scopes.GetStackTop();
+    SymbolTableEntry entry;
+
+    Assert(expr->childs.size() == func.args_count); // args count mismatch
+
+    entry.entry_type = Type::Var;
+    u32 index        = 0;
+
+    // TODO :: Fix this function call to possibly support infinite data structures
+
+    auto transformed = Transform(expr->childs, EvaluateExpressionTree);
+    for (auto x : transformed)
+    {
+        entry.name     = func.args[index];
+        entry.data.var = x;
+
+        GetSingletonLogger().Log(std::string_view((const char *)entry.name.begin, 1), "  ", entry.data.var.data.integer,
+                                 '\n');
+
         index = index + 1;
         current_scope->table.push_back(entry);
     }
@@ -461,11 +524,13 @@ InternDataType EvalUserDefinedFunction(Expression *expr, Funcs &func)
 
     InternDataType retval = {DataTypeTag::None};
 
-    // Open new scope -> already opened
+    // Open new scope for lambda evaluation
+    scopes.PushStack(*lambda.closure);
     for (u32 index = 1; index < func.body->childs.size(); ++index)
         retval = EvaluateExpressionTree(func.body->childs[index]);
 
     // EvaluateExpressionTree(func.body->childs[1]);
+    scopes.PopStack();
     scopes.PopStack();
     // Return the last evaluated value
     return retval;
@@ -479,8 +544,120 @@ InternDataType HandleUserDefinedFunctions(Expression *expr)
     auto current_scope = scopes.GetStackTop();
     auto entry         = scopes.GetSymbolEntry(val);
     Assert(entry != nullptr);
+    if (entry->entry_type == SymbolTableEntry::EntryType::Function)
+        return EvalUserDefinedFunction(expr, entry->data.func);
+    else
+        return EvaluateLambda(expr, entry->data.var);
+}
 
-    return EvalUserDefinedFunction(expr, entry->data.func);
+void CaptureClosureAST(Expression *expr, Lambda &lambda)
+{
+    if (expr->leaf)
+    {
+        if (expr->val.tag == DataTypeTag::Id)
+        {
+            GetSingletonLogger().Log("Leaf visited : ",
+                                     std::string_view((const char *)expr->val.data.id.begin,
+                                                      (u32)(expr->val.data.id.end - expr->val.data.id.begin + 1)),
+                                     '\n');
+            bool not_arg = true;
+
+            for (u32 arg = 0; arg < lambda.func.args_count; ++arg)
+            {
+                u32 len = lambda.func.args[arg].end - lambda.func.args[arg].begin + 1;
+                if (lib::StrCmpEqual(expr->val.data.id.begin, expr->val.data.id.end, lambda.func.args[arg].begin, len))
+                {
+                    not_arg = false;
+                    break;
+                }
+            }
+            if (not_arg)
+            {
+                GetSingletonLogger().Log("Variable captured by lambda : ",
+                                         std::string_view((const char *)expr->val.data.id.begin,
+                                                          (u32)(expr->val.data.id.end - expr->val.data.id.begin + 1)),
+                                         "\n\n");
+                // Find entry in the symbol table and push to the lambda symbol table,
+                // symbol_table should be  behind the shared reference
+                auto entry = scopes.GetSymbolEntry(expr->val);
+                Assert(entry != nullptr);
+                lambda.closure->table.push_back(*entry);
+            }
+        }
+
+        return;
+    }
+
+    for (auto x : expr->childs)
+        CaptureClosureAST(x, lambda);
+}
+
+// InternDataType ProcessLambdaBody(Expression *expr, Lambda &lambda)
+//{
+//     return
+// }
+
+// Let Over Lambda
+InternDataType DefineLet(Expression *expr)
+{
+    scopes.PushStack(SymbolTable());
+
+    auto current_scope = scopes.GetStackTop(); 
+    SymbolTableEntry entry;
+    entry.entry_type = SymbolTableEntry::EntryType::Var;
+
+    // It can only have two childs
+    Assert(expr->childs.size() == 2);
+
+    for (auto &var : expr->childs[0]->childs)
+    {
+        // Don't evaluate just push to the stack
+        entry.name     = {var->op.begin, var->op.end};
+        entry.data.var = EvaluateExpressionTree(var->childs[0]);
+        current_scope->table.push_back(entry); 
+    }
+
+    auto val = EvaluateExpressionTree(expr->childs[1]);
+    return val; 
+}
+
+InternDataType DefineLambda(Expression *expr)
+{
+    InternDataType val = {DataTypeTag::Lambda};
+
+    Lambda         lambda;
+    lambda.closure    = new SymbolTable();
+    auto fn           = &lambda.func;
+    lambda.name       = expr->op; // lambda have no names
+
+    fn->args[0].begin = expr->childs[0]->op.begin;
+    fn->args[0].end   = expr->childs[0]->op.end;
+
+    fn->args_count    = fn->args_count + 1;
+    for (auto const &param : expr->childs[0]->childs)
+    {
+        Assert(fn->args_count < fn->MAX_ARGS - 1);
+
+        fn->args[fn->args_count].begin = param->val.data.id.begin;
+        fn->args[fn->args_count].end   = param->val.data.id.end;
+
+        fn->args_count                 = fn->args_count + 1;
+
+        Assert(param->leaf);
+        GetSingletonLogger().Log("\nLamda parameters are :  ",
+                                 std::string_view((const char *)param->val.data.id.begin,
+                                                  u32(param->val.data.id.end - param->val.data.id.begin + 1)));
+    }
+
+    // push all the segments as the body
+    fn->body = expr; // Instead of  handling this a simple stack of captured variable pushed after the lambda would've
+                     // beein nice
+    // Step into the function body and evaluate
+    // fn.body         = expr->childs[1];
+    // Lambdas aren't pushed to any stacks
+    CaptureClosureAST(expr->childs[1], lambda);
+    val.data.lambda = lambda;
+    return val;
 }
 
 InternDataType HandleBuiltinFunctions(Expression *expr)
@@ -601,7 +778,14 @@ InternDataType HandleBuiltinFunctions(Expression *expr)
     if (lib::StrCmpEqual(expr->op.begin, expr->op.end, UNPACK_STR("not")))
         return ApplyLogicalNot(expr);
     if (lib::StrCmpEqual(expr->op.begin, expr->op.end, UNPACK_STR("remainder")))
-        return InternDataType{DataTypeTag::Int, EvaluateExpressionTree(expr->childs[0]).data.integer % EvaluateExpressionTree(expr->childs[1]).data.integer};
+        return InternDataType{DataTypeTag::Int, EvaluateExpressionTree(expr->childs[0]).data.integer %
+                                                    EvaluateExpressionTree(expr->childs[1]).data.integer};
+
+    // This completes the let over lambda
+    if (lib::StrCmpEqual(expr->op.begin, expr->op.end, UNPACK_STR("let")))
+        return DefineLet(expr);
+    if (lib::StrCmpEqual(expr->op.begin, expr->op.end, UNPACK_STR("lambda")))
+        return DefineLambda(expr);
 
     return HandleUserDefinedFunctions(expr);
     // Unimplemented();
@@ -650,6 +834,12 @@ InternDataType EvaluateExpressionTree(Expression *expr)
         return ApplyComparisons(EvaluateExpressionTree(expr->childs[0]), EvaluateExpressionTree(expr->childs[1]),
                                 [](auto x, auto y) { return x >= y; });
 
+    if (lib::StrCmpEqual(expr->op.begin, expr->op.end, UNPACK_STR("random")))
+    {
+        InternDataType random = {DataTypeTag::Int}; 
+        random.data.integer   = rand() % EvaluateExpressionTree(expr->childs[0]).data.integer; 
+        return random;
+    }
     // HandleCompareExpresions(expr);
 
     return HandleBuiltinFunctions(expr);

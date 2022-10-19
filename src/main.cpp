@@ -28,7 +28,7 @@ void TestList()
 int main(int argc, char **argv)
 {
     // Tokenizer     tokenizer((const u8 *)"(+ 3 (+ 1 2 3) (+ 3 2 1) (- 4 3) ) $", 0, 40);
-    std::ifstream src_code("./lisp/fermat.lisp", std::ios::binary | std::ios::in);
+    std::ifstream src_code("./lisp/cons.lisp", std::ios::binary | std::ios::in);
 
     // This one's not good but meh
     srand(time(NULL)); 
@@ -58,10 +58,22 @@ int main(int argc, char **argv)
 
     auto valprint = [&](auto &x) -> auto
     {
-        if (x.tag == Eval::DataTypeTag::Int)
-            std::cout << x.data.integer;
-        else
-            std::cout << x.data.real;
+        auto print = [&](auto &x) {
+            if (x.tag == Eval::DataTypeTag::Int)
+                std::cout << x.data.integer;
+            else if (x.tag == Eval::DataTypeTag::Real)
+                std::cout << x.data.real;
+        };
+        print(x);
+        if (x.tag == Eval::DataTypeTag::Cons)
+        {
+            std::cout << "( ";
+            print(x.data.cons->car);
+            std::cout << " , ";
+            print(x.data.cons->cdr); 
+            std::cout << " )\n";
+        }
+
     };
 
     std::cout << GetSingletonLogger().dump() << std::endl;

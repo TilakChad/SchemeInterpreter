@@ -25,7 +25,7 @@ template <typename Callable, typename... Args> auto ApplyFunc(Callable &&c, Args
 
 export enum class DataTypeTag
 {
-    List = 0,
+    Cons = 0,
     Int,
     Real,
     Ptr,
@@ -70,23 +70,24 @@ struct Lambda
     SymbolTable *closure;
 };
 
+struct Cons;
+
 export struct InternDataType
 {
-
     DataTypeTag tag; // Tag isn't required if variants are used
 
     // std::variant<std::monostate, std::vector<InternDataType>, i64, f64, usize> data; // use visitor patterns for this
     union
     {
-        i64                       integer;
-        f64                       real = 0.0f;
+        i64         integer;
+        f64         real = 0.0f;
 
-        TwoBytePtrs               id;
+        TwoBytePtrs id;
 
-        usize                     ptr;
-        lib::List<InternDataType> list;
+        usize       ptr;
 
-        Lambda                    lambda;
+        Cons       *cons;
+        Lambda      lambda;
     } data;
 
     template <typename U>
@@ -95,6 +96,14 @@ export struct InternDataType
         return *(U *)&data;
     }
 };
+
+struct Cons
+{
+    InternDataType car;
+    InternDataType cdr;
+};
+
+Cons *MakeCons(InternDataType &a, InternDataType &b);
 
 struct SymbolTableEntry
 {
@@ -432,10 +441,10 @@ InternDataType EvaluateLeaf(Expression *expr)
     }
 }
 
-InternDataType ConstructList(Expression *expr)
-{
-    return InternDataType(DataTypeTag::List);
-}
+// InternDataType ConstructList(Expression *expr)
+//{
+//     return InternDataType(DataTypeTag::List);
+// }
 
 InternDataType EvalUserDefinedFunction(Expression *expr, Funcs &func)
 {
@@ -602,7 +611,7 @@ InternDataType DefineLet(Expression *expr)
 {
     scopes.PushStack(SymbolTable());
 
-    auto current_scope = scopes.GetStackTop(); 
+    auto             current_scope = scopes.GetStackTop();
     SymbolTableEntry entry;
     entry.entry_type = SymbolTableEntry::EntryType::Var;
 
@@ -612,13 +621,13 @@ InternDataType DefineLet(Expression *expr)
     for (auto &var : expr->childs[0]->childs)
     {
         // Don't evaluate just push to the stack
-        entry.name     = {var->op.begin, var->op.end};
+        entry.name     = {var->op.end, var->op.begin};
         entry.data.var = EvaluateExpressionTree(var->childs[0]);
-        current_scope->table.push_back(entry); 
+        current_scope->table.push_back(entry);
     }
 
     auto val = EvaluateExpressionTree(expr->childs[1]);
-    return val; 
+    return val;
 }
 
 InternDataType DefineLambda(Expression *expr)
@@ -658,6 +667,40 @@ InternDataType DefineLambda(Expression *expr)
     CaptureClosureAST(expr->childs[1], lambda);
     val.data.lambda = lambda;
     return val;
+}
+
+Cons *MakeCons(InternDataType &x1, InternDataType &x2)
+{
+    // It also means that the pointers will be shallow copied 
+    // No garbage collection
+    auto cons = new Cons{};
+    cons->car = x1; 
+    cons->cdr = x2; 
+    return cons; 
+ }
+
+InternDataType DefineCons(Expression *expr)
+{
+    auto           x1   = EvaluateExpressionTree(expr->childs[0]);
+    auto           x2   = EvaluateExpressionTree(expr->childs[1]);
+    auto           cons = MakeCons(x1, x2);
+    InternDataType val  = {DataTypeTag::Cons};
+    val.data.cons       = cons;
+    return val;
+}
+
+InternDataType Car(Expression *expr)
+{
+    auto x1 = EvaluateExpressionTree(expr->childs[0]);
+    Assert(x1.tag == DataTypeTag::Cons);
+    return x1.data.cons->car;
+}
+
+InternDataType Cdr(Expression *expr)
+{
+    auto x1 = EvaluateExpressionTree(expr->childs[0]);
+    Assert(x1.tag == DataTypeTag::Cons);
+    return x1.data.cons->cdr;
 }
 
 InternDataType HandleBuiltinFunctions(Expression *expr)
@@ -787,6 +830,13 @@ InternDataType HandleBuiltinFunctions(Expression *expr)
     if (lib::StrCmpEqual(expr->op.begin, expr->op.end, UNPACK_STR("lambda")))
         return DefineLambda(expr);
 
+    if (lib::StrCmpEqual(expr->op.begin, expr->op.end, UNPACK_STR("cons")))
+        return DefineCons(expr);
+    if (lib::StrCmpEqual(expr->op.begin, expr->op.end, UNPACK_STR("car")))
+        return Car(expr);
+    if (lib::StrCmpEqual(expr->op.begin, expr->op.end, UNPACK_STR("cdr")))
+        return Cdr(expr);
+
     return HandleUserDefinedFunctions(expr);
     // Unimplemented();
 }
@@ -836,8 +886,26 @@ InternDataType EvaluateExpressionTree(Expression *expr)
 
     if (lib::StrCmpEqual(expr->op.begin, expr->op.end, UNPACK_STR("random")))
     {
-        InternDataType random = {DataTypeTag::Int}; 
-        random.data.integer   = rand() % EvaluateExpressionTree(expr->childs[0]).data.integer; 
+        InternDataType random = {DataTypeTag::Int};
+        random.data.integer   = rand() % EvaluateExpressionTree(expr->childs[0]).data.integer;
+        return random;
+    }
+    if (lib::StrCmpEqual(expr->op.begin, expr->op.end, UNPACK_STR("sine")))
+    {
+        InternDataType random = {DataTypeTag::Real};
+        random.data.real      = sin(EvaluateExpressionTree(expr->childs[0]).data.real);
+        return random;
+    }
+    if (lib::StrCmpEqual(expr->op.begin, expr->op.end, UNPACK_STR("cosine")))
+    {
+        InternDataType random = {DataTypeTag::Real};
+        random.data.real      = cos(EvaluateExpressionTree(expr->childs[0]).data.real);
+        return random;
+    }
+    if (lib::StrCmpEqual(expr->op.begin, expr->op.end, UNPACK_STR("tangent")))
+    {
+        InternDataType random = {DataTypeTag::Int};
+        random.data.real      = tan(EvaluateExpressionTree(expr->childs[0]).data.real);
         return random;
     }
     // HandleCompareExpresions(expr);

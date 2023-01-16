@@ -1,7 +1,8 @@
-#pragma once 
+#pragma once
 
 #include <stdio.h>
-#include <stdlib.h> 
+#include <stdlib.h>
+#include <source_location>
 
 #if defined(__GNUC__)
 #define Unreachable() __builtin_unreachable()
@@ -11,6 +12,7 @@
 
 #define Unimplemented()                                                                                                \
     {                                                                                                                  \
+        auto const src = std::source_location::current();                                                              \
         fprintf(stderr, "Function %s() not implemented : %d.", __func__, __LINE__);                                    \
         abort();                                                                                                       \
     }

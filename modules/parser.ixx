@@ -6,13 +6,14 @@ import Lexer;
 
 #include <variant>
 #include <new>
+#include <vector>
 // #include <memory>
 
 export module Parser;
 
 export class Parser
 {
-    Eval::Expression *ast;
+    std::vector<Eval::Expression *> root_ast;
 
   public:
     bool ParseStart(Tokenizer &tokenizer)
@@ -21,13 +22,21 @@ export class Parser
         if (next.type == TokenType::End)
             return false;
         Assert(next.type == TokenType::OParen);
-        ast = CreateExpressionTree(tokenizer);
+        root_ast.push_back(CreateExpressionTree(tokenizer));
         return true;
     }
 
     Eval::InternDataType EvalAST()
     {
-        return Eval::EvaluateExpressionTree(ast);
+        return Eval::EvaluateExpressionTree(root_ast.back());
+    }
+
+    void DestroyAST()
+    {
+        for (auto ast : root_ast)
+        {
+            DestroyInternal(ast);
+        }
     }
 
     void ParseList(Tokenizer &tokenizer)
@@ -94,5 +103,15 @@ export class Parser
         }
 
         return expr;
+    }
+
+  private:
+    void DestroyInternal(Eval::Expression *expr)
+    {
+        for (auto &child : expr->childs)
+        {
+            DestroyInternal(child);
+        }
+        delete expr;
     }
 };

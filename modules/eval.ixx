@@ -15,200 +15,17 @@ import Lib;
 
 export module Eval;
 
+export import :base;
+
 export namespace Eval
 {
-
 template <typename Callable, typename... Args> auto ApplyFunc(Callable &&c, Args... args)
 {
-    return std::invoke(c, args...);
+    return std::invoke(std::forward(c), args...);
 }
 
-export enum class DataTypeTag
-{
-    Cons = 0,
-    Int,
-    Real,
-    Ptr,
-    Id, // Or id that needs to be resolved or errored
-    Lambda,
-    None
-};
-
-struct InternDataType;
-
-template <typename T>
-concept NativeType = std::is_same_v<T, i64> || std::is_same_v<T, f64> || std::is_same_v<T, TwoBytePtrs> ||
-    std::is_same_v<T, lib::List<InternDataType>> || std::is_same_v<T, TwoBytePtrs>;
-
-struct Macros
-{
-};
-
-struct Expression;
-
-struct Funcs
-{
-    static constexpr u32 MAX_ARGS       = 10;
-    u32                  args_count     = 0;
-
-    TwoBytePtrs          args[MAX_ARGS] = {};
-
-    Expression          *body; // ?? Is it the right way of doing this?
-};
-
-struct SymbolTable;
-
-struct Lambda
-{
-    // Lambda are anonymous functions nothing fancy
-    // Clone whole the symbol table, its the easiest solution, but the least efficient one
-    // (lambda(x)(* x y)) -> y is to be evaluated from the surrounding scope
-    // One solution is to traverse the function body and replace the symbols not defined as lambda parameters,its not
-    // straightforward to implement it though
-    Funcs        func;
-    TwoBytePtrs  name;
-    SymbolTable *closure;
-};
-
-struct Cons;
-
-export struct InternDataType
-{
-    DataTypeTag tag; // Tag isn't required if variants are used
-
-    // std::variant<std::monostate, std::vector<InternDataType>, i64, f64, usize> data; // use visitor patterns for this
-    union
-    {
-        i64         integer;
-        f64         real = 0.0f;
-
-        TwoBytePtrs id;
-
-        usize       ptr;
-
-        Cons       *cons;
-        Lambda      lambda;
-    } data;
-
-    template <typename U>
-    requires NativeType<U> U &get_value()
-    {
-        return *(U *)&data;
-    }
-};
-
-struct Cons
-{
-    InternDataType car;
-    InternDataType cdr;
-};
-
-Cons *MakeCons(InternDataType &a, InternDataType &b);
-
-struct SymbolTableEntry
-{
-    enum class EntryType
-    {
-        Var = 0, // Variable with a value
-        Id,      // Unresolved identifier
-        Macro,
-        Function,
-        Lambda,
-        None
-    };
-
-    SymbolTableEntry()     = default;
-
-    EntryType   entry_type = EntryType::None;
-    TwoBytePtrs name;
-
-    union
-    {
-        InternDataType var = {DataTypeTag::None};
-        Macros         macro;
-        Funcs          func;
-    } data;
-};
-
-struct SymbolTable
-{
-    std::vector<SymbolTableEntry> table;
-
-    void                          dump()
-    {
-        constexpr const char *types[] = {"Var", "Id", "Macro", "Function", "Lambda", "None"};
-
-        for (auto const &x : table)
-        {
-            GetSingletonLogger().Log(
-                types[u32(x.entry_type)], " :  ",
-                std::string_view((const char *)x.name.begin, static_cast<size_t>(x.name.end - x.name.begin + 1)));
-        }
-    }
-
-    SymbolTableEntry *GetEntryInTable(InternDataType &type)
-    {
-        auto it = ranges::find_if(table, [&](auto const &elem) {
-            if (true) //(elem.entry_type == SymbolTableEntry::EntryType::Var)
-            {
-                if (lib::StrCmpEqual(type.data.id.begin, type.data.id.end, elem.name.begin,
-                                     elem.name.end - elem.name.begin + 1))
-                    return true;
-            }
-            return false;
-        });
-        if (it != table.end())
-            return &(*it);
-        return nullptr;
-    }
-};
-
-struct ScopeStack
-{
-    lib::List<SymbolTable> scope_stack;
-
-    ScopeStack()
-    {
-        scope_stack.AddNode(SymbolTable()); // This will serve as global scope for  the interpreter
-    }
-
-    SymbolTable *GetStackTop()
-    {
-        return &scope_stack.GetFirstNode()->data;
-    }
-
-    SymbolTable *PushStack(const SymbolTable &table)
-    {
-        scope_stack.AddNode(table);
-        return &scope_stack.GetFirstNode()->data;
-    }
-
-    SymbolTableEntry *GetSymbolEntry(InternDataType &key)
-    {
-        for (auto begin = scope_stack.head; begin != scope_stack.GetSentinel(); begin = begin->next)
-        {
-            if (auto x = begin->data.GetEntryInTable(key); x)
-                return x;
-        }
-        return nullptr;
-    }
-    void PopStack()
-    {
-        scope_stack.RemoveFirstNode();
-    }
-};
-
-ScopeStack scopes;
-
-struct Expression
-{
-    Expression()                   = default;
-
-    bool                      leaf = false;
-    TwoBytePtrs               op; // if there are multiple types apply it recursively
-    InternDataType            val;
-    std::vector<Expression *> childs;
-};
+ScopeStack       scopes;
+GarbageCollector gc; // A minimalistic garbage collector implementing mark and sweep approach
 
 template <typename T, typename Callable>
 requires std::is_invocable_v<Callable, T>
@@ -224,6 +41,16 @@ auto Transform(std::vector<T> &vec, Callable &&op) -> auto
 }
 
 InternDataType EvaluateExpressionTree(Expression *expr);
+Cons          *MakeCons(InternDataType &a, InternDataType &b);
+
+export void    RunGarbageCollector()
+{
+    // Pop the last stack
+    if (false /* last_ran*/)
+        scopes.PopStack(); // Run the garbage collector for the last time, by popping the last stack
+    gc.Run(&scopes);
+    gc.FreeGarbage();
+}
 
 struct InternVisitor
 {
@@ -671,13 +498,14 @@ InternDataType DefineLambda(Expression *expr)
 
 Cons *MakeCons(InternDataType &x1, InternDataType &x2)
 {
-    // It also means that the pointers will be shallow copied 
+    // It also means that the pointers will be shallow copied
     // No garbage collection
     auto cons = new Cons{};
-    cons->car = x1; 
-    cons->cdr = x2; 
-    return cons; 
- }
+    gc.AddAllocation(cons, sizeof(Cons));
+    cons->car = x1;
+    cons->cdr = x2;
+    return cons;
+}
 
 InternDataType DefineCons(Expression *expr)
 {

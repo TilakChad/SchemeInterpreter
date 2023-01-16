@@ -157,14 +157,24 @@ template <typename T> struct List
     {
     }
 
+    ~List()
+    {
+        for (auto ptr = head; ptr != sentinel;)
+        {
+            auto tmp = ptr->next;
+            delete ptr;
+            ptr = tmp;
+        }
+        delete sentinel;
+    }
+
   private:
     Node *sentinel;
 };
 
-template <typename T> constexpr std::ostream &operator<<(std::ostream &os, const List<T> &lst) requires requires(T x)
-{
-    os << x;
-}
+template <typename T>
+constexpr std::ostream &operator<<(std::ostream &os, const List<T> &lst)
+requires requires(T x) { os << x; }
 {
     auto head = lst.head;
 
@@ -176,5 +186,3 @@ template <typename T> constexpr std::ostream &operator<<(std::ostream &os, const
     return os << std::endl;
 }
 } // namespace lib
-
-export void MyFunc();

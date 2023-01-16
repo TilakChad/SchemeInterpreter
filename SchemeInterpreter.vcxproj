@@ -100,7 +100,7 @@
   </ItemDefinitionGroup>
   <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">
     <ClCompile>
-      <WarningLevel>EnableAllWarnings</WarningLevel>
+      <WarningLevel>Level4</WarningLevel>
       <SDLCheck>true</SDLCheck>
       <PreprocessorDefinitions>_DEBUG;_CONSOLE;%(PreprocessorDefinitions)</PreprocessorDefinitions>
       <ConformanceMode>true</ConformanceMode>
@@ -110,11 +110,12 @@
     <Link>
       <SubSystem>Console</SubSystem>
       <GenerateDebugInformation>true</GenerateDebugInformation>
+      <StackReserveSize>4194304</StackReserveSize>
     </Link>
   </ItemDefinitionGroup>
   <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Release|x64'">
     <ClCompile>
-      <WarningLevel>EnableAllWarnings</WarningLevel>
+      <WarningLevel>Level4</WarningLevel>
       <FunctionLevelLinking>true</FunctionLevelLinking>
       <IntrinsicFunctions>true</IntrinsicFunctions>
       <SDLCheck>true</SDLCheck>
@@ -128,13 +129,16 @@
       <EnableCOMDATFolding>true</EnableCOMDATFolding>
       <OptimizeReferences>true</OptimizeReferences>
       <GenerateDebugInformation>true</GenerateDebugInformation>
+      <StackReserveSize>4194304</StackReserveSize>
     </Link>
   </ItemDefinitionGroup>
   <ItemGroup>
-    <ClCompile Include="modules\log.ixx" />
+    <ClCompile Include="modules\base.ixx" />
     <ClCompile Include="modules\eval.ixx" />
+    <ClCompile Include="modules\gc_impl.ixx" />
     <ClCompile Include="modules\lexer.ixx" />
     <ClCompile Include="modules\lib.ixx" />
+    <ClCompile Include="modules\log.ixx" />
     <ClCompile Include="modules\parser.ixx" />
     <ClCompile Include="src\main.cpp" />
   </ItemGroup>
@@ -144,6 +148,14 @@
     <ClInclude Include="include\types.hpp" />
   </ItemGroup>
   <ItemGroup>
+    <None Include="lisp\ackermann.lisp" />
+    <None Include="lisp\bisection.lisp" />
+    <None Include="lisp\cons.lisp" />
+    <None Include="lisp\counting_change.lisp" />
+    <None Include="lisp\ex1_11.lisp" />
+    <None Include="lisp\ex1_16.lisp" />
+    <None Include="lisp\fermat.lisp" />
+    <None Include="lisp\lambdacheck.lisp" />
     <None Include="lisp\test.lisp" />
   </ItemGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />

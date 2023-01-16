@@ -18,19 +18,25 @@
     <ClCompile Include="src\main.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
-    <ClCompile Include="modules\lexer.ixx">
-      <Filter>Source Files</Filter>
-    </ClCompile>
     <ClCompile Include="modules\lib.ixx">
       <Filter>Source Files</Filter>
     </ClCompile>
-    <ClCompile Include="modules\parser.ixx">
+    <ClCompile Include="modules\log.ixx">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="modules\lexer.ixx">
       <Filter>Source Files</Filter>
     </ClCompile>
     <ClCompile Include="modules\eval.ixx">
       <Filter>Source Files</Filter>
     </ClCompile>
-    <ClCompile Include="modules\log.ixx">
+    <ClCompile Include="modules\parser.ixx">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="modules\base.ixx">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="modules\gc_impl.ixx">
       <Filter>Source Files</Filter>
     </ClCompile>
   </ItemGroup>
@@ -47,5 +53,13 @@
   </ItemGroup>
   <ItemGroup>
     <None Include="lisp\test.lisp" />
+    <None Include="lisp\ackermann.lisp" />
+    <None Include="lisp\counting_change.lisp" />
+    <None Include="lisp\ex1_11.lisp" />
+    <None Include="lisp\ex1_16.lisp" />
+    <None Include="lisp\lambdacheck.lisp" />
+    <None Include="lisp\fermat.lisp" />
+    <None Include="lisp\bisection.lisp" />
+    <None Include="lisp\cons.lisp" />
   </ItemGroup>
 </Project>

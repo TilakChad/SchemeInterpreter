@@ -462,7 +462,8 @@ InternDataType DefineLambda(Expression *expr)
     InternDataType val = {DataTypeTag::Lambda};
 
     Lambda         lambda;
-    lambda.closure    = new SymbolTable();
+    lambda.closure = new SymbolTable();
+    gc.AddAllocation(lambda.closure, sizeof(SymbolTable));
     auto fn           = &lambda.func;
     lambda.name       = expr->op; // lambda have no names
 
